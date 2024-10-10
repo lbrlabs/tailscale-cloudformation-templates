@@ -1,0 +1,405 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'CloudFormation template for Tailscale subnet router with VPC selection or input'
+
+Parameters:
+  VpcSelectionMethod:
+    Type: String
+    Default: existing
+    AllowedValues: 
+      - existing
+      - manual
+    Description: Choose whether to select an existing VPC or input a VPC ID manually
+
+  ExistingVpcId:
+    Type: AWS::EC2::VPC::Id
+    Description: Select an existing VPC for the Tailscale subnet router
+
+  ManualVpcId:
+    Type: String
+    Description: Manually input a VPC ID (if not selecting an existing VPC)
+
+  SubnetIds:
+    Type: List<AWS::EC2::Subnet::Id>
+    Description: List of Subnet IDs for the Auto Scaling Group
+
+  TailscaleAuthKey:
+    Type: String
+    NoEcho: true
+    Description: Tailscale authentication key
+
+  InstanceType:
+    Type: String
+    Default: t3.micro
+    Description: EC2 instance type
+
+  AmiId:
+    Type: AWS::EC2::Image::Id
+    Description: AMI ID for the EC2 instances
+
+  MinSize:
+    Type: Number
+    Default: 1
+    Description: Minimum size of the Auto Scaling Group
+
+  MaxSize:
+    Type: Number
+    Default: 1
+    Description: Maximum size of the Auto Scaling Group
+
+  DesiredCapacity:
+    Type: Number
+    Default: 1
+    Description: Desired capacity of the Auto Scaling Group
+
+  EnableSSH:
+    Type: String
+    Default: 'false'
+    AllowedValues: ['true', 'false']
+    Description: Enable SSH access via Tailscale
+
+  Hostname:
+    Type: String
+    Default: ''
+    Description: Hostname of the instance
+
+  AcceptDNS:
+    Type: String
+    Default: 'true'
+    AllowedValues: ['true', 'false']
+    Description: Accept DNS configuration from Tailscale
+
+  AcceptRoutes:
+    Type: String
+    Default: 'false'
+    AllowedValues: ['true', 'false']
+    Description: Accept routes from Tailscale
+
+  AdvertiseConnector:
+    Type: String
+    Default: 'false'
+    AllowedValues: ['true', 'false']
+    Description: Advertise this node as an app connector
+
+  AdvertiseExitNode:
+    Type: String
+    Default: 'false'
+    AllowedValues: ['true', 'false']
+    Description: Offer to be an exit node for internet traffic for the tailnet
+
+  AdvertiseRoutes:
+    Type: CommaDelimitedList
+    Default: ''
+    Description: Routes to advertise to other nodes (comma-separated list)
+
+  AdvertiseTags:
+    Type: CommaDelimitedList
+    Default: ''
+    Description: ACL tags to request (comma-separated list, each must start with 'tag:')
+
+  ExitNode:
+    Type: String
+    Default: ''
+    Description: Tailscale exit node (IP or base name) for internet traffic
+
+  ExitNodeAllowLanAccess:
+    Type: String
+    Default: 'false'
+    AllowedValues: ['true', 'false']
+    Description: Allow direct access to the local network when routing traffic via an exit node
+
+  ForceReauth:
+    Type: String
+    Default: 'false'
+    AllowedValues: ['true', 'false']
+    Description: Force reauthentication
+
+  Json:
+    Type: String
+    Default: 'false'
+    AllowedValues: ['true', 'false']
+    Description: Output in JSON format
+
+  LoginServer:
+    Type: String
+    Default: 'https://controlplane.tailscale.com'
+    Description: Base URL of control server
+
+  Operator:
+    Type: String
+    Default: ''
+    Description: Unix username to allow to operate on tailscaled without sudo
+
+  Reset:
+    Type: String
+    Default: 'false'
+    AllowedValues: ['true', 'false']
+    Description: Reset unspecified settings to their default values
+
+  ShieldsUp:
+    Type: String
+    Default: 'false'
+    AllowedValues: ['true', 'false']
+    Description: Don't allow incoming connections
+
+  Timeout:
+    Type: String
+    Default: '0s'
+    Description: Maximum amount of time to wait for tailscaled to enter a Running state
+
+  NetfilterMode:
+    Type: String
+    Default: 'on'
+    AllowedValues: ['on', 'nodivert', 'off']
+    Description: Netfilter mode
+
+  SnatSubnetRoutes:
+    Type: String
+    Default: 'true'
+    AllowedValues: ['true', 'false']
+    Description: Source NAT traffic to local routes advertised with --advertise-routes
+
+  StatefulFiltering:
+    Type: String
+    Default: 'false'
+    AllowedValues: ['true', 'false']
+    Description: Apply stateful filtering to forwarded packets
+
+  MaxRetries:
+    Type: Number
+    Default: 3
+    Description: Maximum number of retries to connect to the control server
+
+  RetryDelay:
+    Type: Number
+    Default: 5
+    Description: Delay in seconds between retries to connect to the control server
+
+  Track:
+    Type: String
+    Default: 'stable'
+    AllowedValues: ['stable', 'unstable']
+    Description: Version of the Tailscale client to install
+
+Conditions:
+  UseExistingVpc: !Equals 
+    - !Ref VpcSelectionMethod
+    - existing
+
+Resources:
+  SelectedVpcId:
+    Type: Custom::SelectedVpcId
+    Properties:
+      ServiceToken: !GetAtt VpcSelectionFunction.Arn
+      ExistingVpcId: !If [UseExistingVpc, !Ref ExistingVpcId, '']
+      ManualVpcId: !If [UseExistingVpc, '', !Ref ManualVpcId]
+      VpcSelectionMethod: !Ref VpcSelectionMethod
+
+  VpcSelectionFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      Handler: index.handler
+      Role: !GetAtt VpcSelectionFunctionRole.Arn
+      Code:
+        ZipFile: |
+          import cfnresponse
+          import boto3
+
+          def handler(event, context):
+              if event['RequestType'] == 'Delete':
+                  cfnresponse.send(event, context, cfnresponse.SUCCESS, {})
+                  return
+
+              try:
+                  vpc_selection_method = event['ResourceProperties']['VpcSelectionMethod']
+                  if vpc_selection_method == 'existing':
+                      vpc_id = event['ResourceProperties']['ExistingVpcId']
+                  else:
+                      vpc_id = event['ResourceProperties']['ManualVpcId']
+
+                  ec2 = boto3.client('ec2')
+                  response = ec2.describe_vpcs(VpcIds=[vpc_id])
+                  cidr_block = response['Vpcs'][0]['CidrBlock']
+                  cfnresponse.send(event, context, cfnresponse.SUCCESS, {'VpcId': vpc_id, 'CidrBlock': cidr_block})
+              except Exception as e:
+                  print(e)
+                  cfnresponse.send(event, context, cfnresponse.FAILED, {})
+
+      Runtime: python3.8
+      Timeout: 30
+
+  VpcSelectionFunctionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: VpcInfoPolicy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - ec2:DescribeVpcs
+                Resource: '*'
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+
+  TailscaleSubnetRouterSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupName: !Sub '${AWS::StackName}-sg'
+      GroupDescription: Security group for Tailscale subnet router
+      VpcId: !GetAtt SelectedVpcId.VpcId
+      SecurityGroupEgress:
+        - IpProtocol: '-1'
+          FromPort: 0
+          ToPort: 0
+          CidrIp: 0.0.0.0/0
+
+  TailscaleSubnetRouterLaunchTemplate:
+    Type: AWS::EC2::LaunchTemplate
+    Properties:
+      LaunchTemplateName: !Sub 'lt-${AWS::StackName}'
+      LaunchTemplateData:
+        ImageId: !Ref AmiId
+        InstanceType: !Ref InstanceType
+        SecurityGroupIds: 
+          - !Ref TailscaleSubnetRouterSecurityGroup
+        UserData: 
+          Fn::Base64: !Sub 
+            - |
+              #!/bin/bash
+              # Enable IP forwarding
+              echo 'net.ipv4.ip_forward = 1' | sudo tee -a /etc/sysctl.conf
+              sudo sysctl -p /etc/sysctl.conf
+
+              # Disable UDP offload
+              sudo ethtool -K eth0 tx-udp_tnl-segmentation off
+              sudo ethtool -K eth0 tx-udp_tnl-csum-segmentation off
+
+              # Install Tailscale
+              curl -fsSL https://pkgs.tailscale.com/stable/ubuntu/focal.gpg | sudo apt-key add -
+              curl -fsSL https://pkgs.tailscale.com/stable/ubuntu/focal.list | sudo tee /etc/apt/sources.list.d/tailscale.list
+              sudo apt-get update
+              sudo apt-get install -y tailscale
+
+              # Set up Tailscale
+              max_retries="${MaxRetries}"
+              retry_delay="${RetryDelay}"
+              i=1
+              while [ $i -le $max_retries ]
+              do
+                sudo systemctl enable --now tailscaled
+                
+                tailscale_cmd="tailscale up --advertise-exit-node=${AdvertiseExitNode} \
+                  --advertise-connector=${AdvertiseConnector} \
+                  --accept-dns=${AcceptDNS} \
+                  --accept-routes=${AcceptRoutes} \
+                  --authkey ${TailscaleAuthKey} \
+                  --advertise-routes=${VpcCidr} \
+                  --snat-subnet-routes=false \
+                  --hostname=${Hostname} \
+                  --exit-node=${ExitNode} \
+                  --exit-node-allow-lan-access=${ExitNodeAllowLanAccess} \
+                  --json=${Json} \
+                  --login-server=${LoginServer} \
+                  --reset=${Reset} \
+                  --shields-up=${ShieldsUp} \
+                  --ssh=${EnableSSH} \
+                  --snat-subnet-routes=${SnatSubnetRoutes} \
+                  --netfilter-mode=${NetfilterMode} \
+                  --stateful-filtering=${StatefulFiltering} \
+                  --timeout=${Timeout} \
+                  --force-reauth=${ForceReauth}"
+                
+                if [ -n "${AdvertiseTagsJoined}" ]; then
+                  tailscale_cmd="$tailscale_cmd --advertise-tags=${AdvertiseTagsJoined}"
+                fi
+                
+                if [ -n "${Hostname}" ]; then
+                  tailscale_cmd="$tailscale_cmd --hostname=${Hostname}"
+                fi
+                
+                if [ -n "${Operator}" ]; then
+                  tailscale_cmd="$tailscale_cmd --operator=${Operator}"
+                fi
+                
+                # Execute the tailscale up command
+                eval "$tailscale_cmd"
+                
+                # Check the exit status of the previous command
+                if [ $? -eq 0 ]; then
+                  echo "Tailscale installation and configuration succeeded"
+                  exit 0
+                else
+                  echo "Tailscale installation and configuration failed. Retry attempt $i"
+                  sleep $retry_delay
+                fi
+                
+                i=$((i + 1))
+              done
+            - VpcCidr: !GetAtt SelectedVpcId.CidrBlock
+              AdvertiseTagsJoined: !Join [",", !Ref AdvertiseTags]
+
+  TailscaleSubnetRouterASG:
+    Type: AWS::AutoScaling::AutoScalingGroup
+    Properties:
+      AutoScalingGroupName: !Ref AWS::StackName
+      MinSize: !Ref MinSize
+      MaxSize: !Ref MaxSize
+      DesiredCapacity: !Ref DesiredCapacity
+      VPCZoneIdentifier: !Ref SubnetIds
+      LaunchTemplate: 
+        LaunchTemplateId: !Ref TailscaleSubnetRouterLaunchTemplate
+        Version: !GetAtt TailscaleSubnetRouterLaunchTemplate.LatestVersionNumber
+      HealthCheckType: EC2
+      HealthCheckGracePeriod: 300
+      Tags: 
+        - Key: Name
+          Value: !Sub '${AWS::StackName}-instance'
+          PropagateAtLaunch: true
+
+  TailscaleSubnetRouterInstanceProfile:
+    Type: AWS::IAM::InstanceProfile
+    Properties:
+      Path: "/ec2/"
+      Roles: 
+        - !Ref TailscaleSubnetRouterRole
+
+  TailscaleSubnetRouterRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ec2.amazonaws.com
+            Action: sts:AssumeRole
+      Path: "/ec2/"
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore
+        - arn:aws:iam::aws:policy/CloudWatchAgentAdminPolicy
+        - arn:aws:iam::aws:policy/AutoScalingFullAccess
+
+Outputs:
+  AutoScalingGroupName:
+    Description: Name of the Auto Scaling Group
+    Value: !Ref TailscaleSubnetRouterASG
+
+  SecurityGroupId:
+    Description: ID of the Security Group
+    Value: !Ref TailscaleSubnetRouterSecurityGroup
+
+  SelectedVpcId:
+    Description: Selected or Input VPC ID
+    Value: !GetAtt SelectedVpcId.VpcId
+
+  VpcCidrBlock:
+    Description: CIDR Block of the selected or input VPC
+    Value: !GetAtt SelectedVpcId.CidrBlock
