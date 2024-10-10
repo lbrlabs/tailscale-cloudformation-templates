@@ -6,7 +6,7 @@ This CloudFormation template deploys a Tailscale subnet router in AWS, allowing 
 
 Click the button below to deploy this template to your AWS account:
 
-[![Deploy to AWS](https://raw.githubusercontent.com/aws-samples/aws-cloudformation-button/main/deploy-to-aws.png)](https://console.aws.amazon.com/cloudformation/home?region=us-east-1#/stacks/new?stackName=TailscaleSubnetRouter&templateURL=https://raw.githubusercontent.com/yourusername/your-repo-name/main/tailscale-subnet-router-template.yml)
+[![Deploy to AWS CloudFormation](https://img.shields.io/badge/Deploy%20to-AWS%20CloudFormation-orange.svg?style=flat)](https://console.aws.amazon.com/cloudformation/home?region=us-east-1#/stacks/new?stackName=TailscaleSubnetRouter&templateURL=https://raw.githubusercontent.com/lbrlabs/tailscale-cloudformation-templates/refs/heads/main/ha-subnet-router/template.yaml)
 
 ## Features
 
