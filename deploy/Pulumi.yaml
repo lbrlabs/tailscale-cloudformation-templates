@@ -1,0 +1,11 @@
+name: tailscale-cloudformation-templates
+runtime:
+  name: python
+  options:
+    toolchain: pip
+    virtualenv: venv
+description: CloudFormation templates
+config:
+  pulumi:tags:
+    value:
+      pulumi:template: aws-python

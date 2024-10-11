@@ -6,28 +6,35 @@ This CloudFormation template deploys a Tailscale subnet router in AWS, allowing 
 
 Click the button below to deploy this template to your AWS account:
 
-[![Deploy to AWS CloudFormation](https://img.shields.io/badge/Deploy%20to-AWS%20CloudFormation-orange.svg?style=flat)](https://console.aws.amazon.com/cloudformation/home?region=us-east-1#/stacks/new?stackName=TailscaleSubnetRouter&templateURL=https://raw.githubusercontent.com/lbrlabs/tailscale-cloudformation-templates/refs/heads/main/ha-subnet-router/template.yaml)
+[![Deploy to AWS CloudFormation](https://img.shields.io/badge/Deploy%20to-AWS%20CloudFormation-orange.svg?style=flat)](https://console.aws.amazon.com/cloudformation/home?region=us-east-1#/stacks/new?stackName=TailscaleSubnetRouter&templateURL=https://lbr-cfn-templates.s3.us-west-2.amazonaws.com/ha-subnet-router/template.yaml)
 
 ## Features
 
-- Supports selecting an existing VPC or manually inputting a VPC ID
+- Supports selecting an existing VPC
 - Configurable Auto Scaling Group for high availability
 - Customizable Tailscale settings
-- Automatic IP forwarding and UDP offload configuration
+- Automatic IP forwarding configuration
+- IMDSv2 support for enhanced security
+- Custom hostname option for Tailscale nodes
+- Optional open inbound security group for Tailscale UDP port
 
 ## Parameters
 
 The template includes the following parameters:
 
-- `VpcSelectionMethod`: Choose to select an existing VPC or input a VPC ID manually
-- `ExistingVpcId`: Select an existing VPC (if using the 'existing' selection method)
-- `ManualVpcId`: Manually input a VPC ID (if using the 'manual' selection method)
+- `VpcId`: Select a VPC for the Tailscale subnet router
 - `SubnetIds`: List of Subnet IDs for the Auto Scaling Group
 - `TailscaleAuthKey`: Tailscale authentication key
-- `InstanceType`: EC2 instance type (default: t3.micro)
 - `AmiId`: AMI ID for the EC2 instances
+- `InstanceType`: EC2 instance type (default: t3.micro)
 - `MinSize`, `MaxSize`, `DesiredCapacity`: Auto Scaling Group size configuration
-- Various Tailscale configuration options (e.g., `EnableSSH`, `AcceptDNS`, `AdvertiseRoutes`, etc.)
+- `AdvertiseTags`: ACL tags to request (comma-separated list)
+- `EnableSSH`: Enable SSH access via Tailscale
+- `Track`: Version of the Tailscale client to install (stable or unstable)
+- `MaxRetries`: Maximum number of retries to connect to the control server
+- `RetryDelay`: Delay in seconds between retries to connect to the control server
+- `Hostname`: Custom hostname for the Tailscale node (optional)
+- `OpenInboundSecurityGroup`: Option to open UDP port 41641 on the security group
 
 ## Usage
 
@@ -57,10 +64,25 @@ The template provides the following outputs:
 
 ## Security Considerations
 
+- IMDSv2 is enabled by default for enhanced instance metadata security.
 - Ensure that your Tailscale authentication key is kept secret and not shared.
 - Review and adjust the security group settings as needed for your environment.
 - Consider using AWS Secrets Manager to store sensitive information like the Tailscale auth key.
+- The template includes an option to open the Tailscale UDP port (41641) on the security group. Use this feature cautiously and only when necessary.
+
+## Notable Changes
+
+- Added support for IMDSv2 to enhance instance security.
+- Introduced a custom hostname option for Tailscale nodes.
+- Simplified VPC selection to use an existing VPC.
+- Added an option to open the inbound Tailscale UDP port on the security group.
+- Implemented a retry mechanism for Tailscale setup to improve reliability.
+- Included a Lambda function to retrieve VPC CIDR information dynamically.
 
 ## Contributing
 
 Contributions to improve the template are welcome. Please submit pull requests or open issues to suggest changes or report problems.
+
+## License
+
+This project is licensed under the MIT License - see the LICENSE file for details.
